@@ -983,7 +983,11 @@ GenTree* Lowering::LowerSwitch(GenTree* node)
     afterDefaultCondBlock->inheritWeight(originalSwitchBB);
     afterDefaultCondBlock->scaleBBWeight(switchLikelihood);
 
-    bool useJumpSequence = jumpCnt < minSwitchTabJumpCnt;
+    #if defined(TARGET_S390X)
+    bool useJumpSequence = true;
+    #else
+    bool useJumpSequence = jumpCnt < minSwitchTabJumpCnt;
+    #endif
 
     if (TargetOS::IsUnix && TargetArchitecture::IsArm32)
     {
