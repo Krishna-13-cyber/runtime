@@ -2850,63 +2850,72 @@ void CodeGen::genCodeForMemmove(GenTreeBlk* tree)
 //
 void CodeGen::genCodeForInitBlkLoop(GenTreeBlk* initBlkNode)
 {
-    _ASSERTE(!"NYI");
-/*
     GenTree* const dstNode = initBlkNode->Addr();
     genConsumeReg(dstNode);
     const regNumber dstReg = dstNode->GetRegNum();
 
-#ifndef TARGET_ARM64
     GenTree* const zeroNode = initBlkNode->Data();
     genConsumeReg(zeroNode);
-    const regNumber zeroReg = zeroNode->GetRegNum();
-#else
-    const regNumber zeroReg = REG_ZR;
-#endif
 
     if (initBlkNode->IsVolatile())
     {
-        // issue a full memory barrier before a volatile initBlock Operation
+        // Issue full memory barrier before volatile initBlock
         instGen_MemoryBarrier();
     }
 
-    //  str     xzr, [dstReg]
-    //  mov     offsetReg, <block size>
-    //.LOOP:
-    //  str     xzr, [dstReg, offsetReg]
-    //  subs    offsetReg, offsetReg, #8
-    //  bne     .LOOP
-
     const unsigned size = initBlkNode->GetLayout()->GetSize();
-    assert((size >= TARGET_POINTER_SIZE) && ((size % TARGET_POINTER_SIZE) == 0));
+    assert(size > 0);
 
-    // The loop is reversed - it makes it smaller.
-    // Although, we zero the first pointer before the loop (the loop doesn't zero it)
-    // it works as a nullcheck, otherwise the first iteration would try to access
-    // "null + potentially large offset" and hit AV.
-    GetEmitter()->emitIns_R_R(INS_str, EA_PTRSIZE, zeroReg, dstReg);
-    if (size > TARGET_POINTER_SIZE)
+    emitter* emit = GetEmitter();
+
+    // -------------------------------------------------------------
+    // Case 1: Small/Medium block (<= 256 bytes)
+    // A single XC instruction zeros up to 256 bytes with zero loops.
+    // -------------------------------------------------------------
+    if (size <= 256)
     {
-        // Extend liveness of dstReg in case if it gets killed by the store.
-        gcInfo.gcMarkRegPtrVal(dstReg, dstNode->TypeGet());
-
-        const regNumber offsetReg = internalRegisters.GetSingle(initBlkNode);
-        instGen_Set_Reg_To_Imm(EA_PTRSIZE, offsetReg, size - TARGET_POINTER_SIZE);
-
-        BasicBlock* loop = genCreateTempLabel();
-        genDefineTempLabel(loop);
-
-        GetEmitter()->emitIns_R_R_R(INS_str, EA_PTRSIZE, zeroReg, dstReg, offsetReg);
-#ifdef TARGET_ARM64
-        GetEmitter()->emitIns_R_R_I(INS_subs, EA_PTRSIZE, offsetReg, offsetReg, TARGET_POINTER_SIZE);
-#else
-        GetEmitter()->emitIns_R_R_I(INS_sub, EA_PTRSIZE, offsetReg, offsetReg, TARGET_POINTER_SIZE, INS_FLAGS_SET);
-#endif
-        inst_JMP(EJ_ne, loop);
-
-        gcInfo.gcMarkRegSetNpt(genRegMask(dstReg));
+        emit->emitIns_SS(INS_xc, size, dstReg, 0, dstReg, 0);
+        return;
     }
-*/
+
+    // -------------------------------------------------------------
+    // Case 2: Large block (> 256 bytes)
+    // Zero 256 bytes per iteration using XC in a loop.
+    // -------------------------------------------------------------
+    gcInfo.gcMarkRegPtrVal(dstReg, dstNode->TypeGet());
+
+    const regNumber tempReg = internalRegisters.GetSingle(initBlkNode);
+
+    // Calculate how many full 256-byte chunks and remaining bytes
+    unsigned numChunks = size / 256;
+    unsigned remainder = size % 256;
+
+    // tempReg = dstReg + (numChunks * 256) [end pointer for 256-byte chunks]
+    instGen_Set_Reg_To_Imm(EA_PTRSIZE, tempReg, numChunks * 256);
+    emit->emitIns_R_R_R(INS_agrk, EA_PTRSIZE, tempReg, dstReg, tempReg);
+
+    // We use a moving pointer in dstReg or an internal work register.
+    // Let's use internal work register to preserve dstReg if needed, or advance tempReg:
+    BasicBlock* loop = genCreateTempLabel();
+    genDefineTempLabel(loop);
+
+    // Zero 256 bytes
+    emit->emitIns_SS(INS_xc, 256, dstReg, 0, dstReg, 0);
+
+    // Advance dstReg by 256 bytes (LA dstReg, 256(dstReg))
+    emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, dstReg, dstReg, 256);
+
+    // Check if we reached end of 256-byte chunks
+    emit->emitIns_R_R(INS_cgr, EA_PTRSIZE, dstReg, tempReg);
+    inst_JMP(EJ_ne, loop);
+
+    // Zero any trailing remainder (< 256 bytes)
+    if (remainder > 0)
+    {
+        emit->emitIns_SS(INS_xc, remainder, dstReg, 0, dstReg, 0);
+    }
+
+    gcInfo.gcMarkRegSetNpt(genRegMask(dstReg));
 }
 
 
