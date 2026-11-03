@@ -983,6 +983,7 @@ GenTree* Lowering::LowerSwitch(GenTree* node)
     afterDefaultCondBlock->inheritWeight(originalSwitchBB);
     afterDefaultCondBlock->scaleBBWeight(switchLikelihood);
 
+    // TODO: genJumpTable and genTableBasedSwitch have to be implemented later.
     #if defined(TARGET_S390X)
     bool useJumpSequence = true;
     #else
