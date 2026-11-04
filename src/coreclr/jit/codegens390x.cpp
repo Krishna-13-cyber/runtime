@@ -5899,8 +5899,8 @@ void CodeGen::genLclHeap(GenTree* tree)
             return;
         }
 
-        ssize_t total = (ssize_t)AlignUp(amount, STACK_ALIGN) + frameBelow;
-        if (total > 0x7FFFF)
+	ssize_t alignedSize = (ssize_t)AlignUp(amount, STACK_ALIGN);
+	if (alignedSize > 0x7FFFF)
         {
             // TODO: Have to handle the overflow  
         }
@@ -5908,7 +5908,7 @@ void CodeGen::genLclHeap(GenTree* tree)
         regNumber tmpReg = internalRegisters.GetSingle(tree);
 
         emit->emitIns_R_R_I(INS_lg, EA_8BYTE, tmpReg, REG_SPBASE, 0);
-        emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, REG_SPBASE, REG_SPBASE, -total);
+        emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, REG_SPBASE, REG_SPBASE, -alignedSize);
         emit->emitIns_R_R_I(INS_stg, EA_8BYTE, tmpReg, REG_SPBASE, 0);
         emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, targetReg, REG_SPBASE, frameBelow);
     }
@@ -5918,10 +5918,11 @@ void CodeGen::genLclHeap(GenTree* tree)
         regNumber alignedReg = internalRegisters.Extract(tree);
         regNumber tmpReg     = internalRegisters.Extract(tree);
 
-        // alignedReg = ((size + 7) & -8) + frameBelow
+        // alignedReg = ((size + 7) & -8)
         emit->emitIns_R_R(INS_lgr, EA_8BYTE, alignedReg, sizeReg);
-        emit->emitIns_R_R(INS_ngr, EA_8BYTE, alignedReg, tmpReg);
-        emit->emitIns_R_R_I(INS_agfi, EA_8BYTE, alignedReg, alignedReg, frameBelow);
+        emit->emitIns_R_I(INS_agfi, EA_8BYTE, alignedReg, 7);
+	emit->emitIns_R_I(INS_lgfi, EA_8BYTE, tmpReg, -8);
+	emit->emitIns_R_R(INS_ngr, EA_8BYTE, alignedReg, tmpReg);
 
         emit->emitIns_R_R_I(INS_lg, EA_8BYTE, tmpReg, REG_SPBASE, 0);
         emit->emitIns_R_R(INS_sgr, EA_8BYTE, REG_SPBASE, alignedReg);
