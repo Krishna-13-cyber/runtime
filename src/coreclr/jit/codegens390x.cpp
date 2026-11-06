@@ -4473,7 +4473,12 @@ void CodeGen::genCodeForBinary(GenTreeOp* treeNode)
         // For a 64-bit AND with a 32-bit immediate
         if (treeNode->OperIs(GT_AND) && ((emitTypeSize(treeNode) == EA_8BYTE) || (emitTypeSize(treeNode) == EA_BYREF)))
         {
-            emit->emitIns_R_I(INS_nihf, EA_8BYTE, targetReg, 0);
+            uint64_t uimm = static_cast<uint64_t>(op2->AsIntConCommon()->IconValue());
+            uint32_t h32 = static_cast<uint32_t>(uimm >> 32);
+            if (h32 != 0xFFFFFFFFU)
+            {
+                emit->emitIns_R_I(INS_nihf, EA_8BYTE, targetReg, 0);
+            }
         }
     }
     else
