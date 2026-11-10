@@ -5880,10 +5880,9 @@ void CodeGen::genLclHeap(GenTree* tree)
     emitter*  emit      = GetEmitter();
     regNumber targetReg = tree->GetRegNum();
 
-    if (compiler->info.compInitMem)
-    {
-        // TODO: Have to handle zeroing of memory
-    }
+    noway_assert((genActualType(size->gtType) == TYP_INT) || (genActualType(size->gtType) == TYP_I_IMPL));
+    noway_assert(isFramePointerUsed());
+    noway_assert(genStackLevel == 0);
 
     const ssize_t frameBelow = S390X_REG_SAVE_AREA_SIZE + (ssize_t)compiler->lvaOutgoingArgSpaceSize;
 
@@ -5899,35 +5898,82 @@ void CodeGen::genLclHeap(GenTree* tree)
             return;
         }
 
-	ssize_t alignedSize = (ssize_t)AlignUp(amount, STACK_ALIGN);
-	if (alignedSize > 0x7FFFF)
+        // Round size up to a multiple of STACK_ALIGN (8) so SP stays 8-byte aligned.
+        ssize_t alignedSize = (ssize_t)AlignUp(amount, STACK_ALIGN);
+
+        if (alignedSize <= 0x7FFFF)
         {
-            // TODO: Have to handle the overflow  
+            emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, REG_SPBASE, REG_SPBASE, -alignedSize);
+        }
+        else
+        {
+            // REG_R0 is scratch holding the negated size.
+            regNumber rTemp = REG_R0;
+            emit->emitIns_R_I(INS_lgfi, EA_8BYTE, rTemp, -(int)alignedSize);
+            emit->emitIns_R_R(INS_agr, EA_PTRSIZE, REG_SPBASE, rTemp);
         }
 
-        regNumber tmpReg = internalRegisters.GetSingle(tree);
+        // REG_FPBASE (r11) is stored as the back chain at the new SP.
+        emit->emitIns_R_R_I(INS_stg, EA_8BYTE, REG_FPBASE, REG_SPBASE, 0);
 
-        emit->emitIns_R_R_I(INS_lg, EA_8BYTE, tmpReg, REG_SPBASE, 0);
-        emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, REG_SPBASE, REG_SPBASE, -alignedSize);
-        emit->emitIns_R_R_I(INS_stg, EA_8BYTE, tmpReg, REG_SPBASE, 0);
+        if (compiler->info.compInitMem)
+        {
+            regNumber rZero = REG_R0;
+            emit->emitIns_R_R(INS_xgr, EA_8BYTE, rZero, rZero);
+
+            for (ssize_t offset = 0; offset < alignedSize; offset += 8)
+            {
+                emit->emitIns_R_R_I(INS_stg, EA_8BYTE, rZero, REG_SPBASE, frameBelow + offset);
+            }
+        }
+
         emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, targetReg, REG_SPBASE, frameBelow);
     }
     else
     {
-        regNumber sizeReg    = genConsumeReg(size);
-        regNumber alignedReg = internalRegisters.Extract(tree);
-        regNumber tmpReg     = internalRegisters.Extract(tree);
+        // sizeReg is the read-only input, alignedReg the rounded size, tmpReg the mask then write pointer.
+        regNumber   sizeReg    = genConsumeReg(size);
+        regNumber   alignedReg = internalRegisters.Extract(tree);
+        regNumber   tmpReg     = internalRegisters.Extract(tree);
+        BasicBlock* endLabel   = genCreateTempLabel();
 
-        // alignedReg = ((size + 7) & -8)
-        emit->emitIns_R_R(INS_lgr, EA_8BYTE, alignedReg, sizeReg);
+        // Zero-extending a 32-bit value so the upper 32 bits are clean.
+        emit->emitIns_R_R(size->TypeIs(TYP_INT) ? INS_llgfr : INS_lgr, EA_8BYTE, alignedReg, sizeReg);
+
+        emit->emitIns_R_I(INS_lgfi, EA_8BYTE, targetReg, 0);
+        emit->emitIns_R_I(INS_cgfi, EA_8BYTE, alignedReg, 0);
+        inst_JMP(EJ_eq, endLabel);
+
+        // alignedReg = (size + 7) & -8.
         emit->emitIns_R_I(INS_agfi, EA_8BYTE, alignedReg, 7);
-	emit->emitIns_R_I(INS_lgfi, EA_8BYTE, tmpReg, -8);
-	emit->emitIns_R_R(INS_ngr, EA_8BYTE, alignedReg, tmpReg);
+        emit->emitIns_R_I(INS_lgfi, EA_8BYTE, tmpReg, -8);
+        emit->emitIns_R_R(INS_ngr, EA_8BYTE, alignedReg, tmpReg);
 
-        emit->emitIns_R_R_I(INS_lg, EA_8BYTE, tmpReg, REG_SPBASE, 0);
         emit->emitIns_R_R(INS_sgr, EA_8BYTE, REG_SPBASE, alignedReg);
-        emit->emitIns_R_R_I(INS_stg, EA_8BYTE, tmpReg, REG_SPBASE, 0);
+
+        // REG_FPBASE (r11) is stored as the back chain at the new SP.
+        emit->emitIns_R_R_I(INS_stg, EA_8BYTE, REG_FPBASE, REG_SPBASE, 0);
+
+        if (compiler->info.compInitMem)
+        {
+            // tmpReg is the write pointer, alignedReg the remaining byte count.
+            BasicBlock* loop  = genCreateTempLabel();
+            regNumber   rZero = REG_R0;
+            emit->emitIns_R_R(INS_xgr, EA_8BYTE, rZero, rZero);
+
+            emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, tmpReg, REG_SPBASE, frameBelow);
+
+            genDefineTempLabel(loop);
+            emit->emitIns_R_R_I(INS_stg, EA_8BYTE, rZero, tmpReg, 0);
+            emit->emitIns_R_I(INS_aghi, EA_8BYTE, tmpReg, 8);
+            emit->emitIns_R_I(INS_aghi, EA_8BYTE, alignedReg, -8);
+            emit->emitIns_R_I(INS_cgfi, EA_8BYTE, alignedReg, 0);
+            inst_JMP(EJ_ne, loop);
+        }
+
         emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, targetReg, REG_SPBASE, frameBelow);
+
+        genDefineTempLabel(endLabel);
     }
 
     genProduceReg(tree);
