@@ -4477,7 +4477,7 @@ void CodeGen::genCodeForBinary(GenTreeOp* treeNode)
             uint32_t h32 = static_cast<uint32_t>(uimm >> 32);
             if (h32 != 0xFFFFFFFFU)
             {
-                emit->emitIns_R_I(INS_nihf, EA_8BYTE, targetReg, 0);
+                emit->emitIns_R_I(INS_nihf, EA_8BYTE, targetReg, h32);
             }
         }
     }
