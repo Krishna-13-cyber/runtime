@@ -3519,6 +3519,7 @@ bool Compiler::optNarrowTree(GenTree* tree, var_types srct, var_types dstt, Valu
             case GT_IND:
 
             NARROW_IND:
+		// TODO: We need to read the correct side of bits for S390X/Big-endianness
 		#ifdef TARGET_S390X
                 // Narrowing a memory operand by retyping it shrinks the load. That reads
                 // the lowest-addressed bytes, which are the high-order bytes on a big-endian arch.
