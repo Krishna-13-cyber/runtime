@@ -3291,6 +3291,7 @@ void emitter::emitIns_R_I(instruction ins,
         case INS_lgfi:
         case INS_iihf:
         case INS_iilf:
+        case INS_nill:
         case INS_chi:
         case INS_cfi:
         case INS_cgfi:
@@ -10332,6 +10333,13 @@ size_t emitter::emitOutputInstr(insGroup* ig, instrDesc* id, BYTE** dp)
         case INS_chi:
             imm = emitGetInsSC(id);
             assert(isValidSimm<16>(imm));
+            op = emitInsCode(ins, fmt);
+            S390_RI_a(dst, op, id->idReg1(), imm);
+            break;
+
+        case INS_nill:
+            imm = emitGetInsSC(id);
+            assert(isValidUimm<16>(imm));
             op = emitInsCode(ins, fmt);
             S390_RI_a(dst, op, id->idReg1(), imm);
             break;
