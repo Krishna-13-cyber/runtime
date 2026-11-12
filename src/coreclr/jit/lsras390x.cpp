@@ -1971,7 +1971,6 @@ int LinearScan::BuildNode(GenTree* tree)
                         {
                             // We need two registers: regCnt and RegTmp
                             buildInternalIntRegisterDefForNode(tree);
-                            buildInternalIntRegisterDefForNode(tree);
                         }
                     }
                 }

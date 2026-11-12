@@ -5904,20 +5904,13 @@ void CodeGen::genLclHeap(GenTree* tree)
         // Read old backchain from 0(SP) before adjusting SP.
         emit->emitIns_R_R_I(INS_lg, EA_8BYTE, targetReg, REG_SPBASE, 0);
 
-        if (alignedSize <= 0x7FFFF)
-        {
-            emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, REG_SPBASE, REG_SPBASE, -alignedSize);
-        }
-        else
-        {
-            emit->emitIns_R_I(INS_agfi, EA_8BYTE, REG_SPBASE, -(int)alignedSize);
-        }
+        emit->emitIns_R_I(INS_agfi, EA_8BYTE, REG_SPBASE, -(int)alignedSize);
 
         // Store preserved caller backchain at new 0(SP).
         emit->emitIns_R_R_I(INS_stg, EA_8BYTE, targetReg, REG_SPBASE, 0);
 
-        // Compute dynamic buffer (SP + frameBelow).
-        emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, targetReg, REG_SPBASE, frameBelow);
+        emit->emitIns_R_R(INS_lgr, EA_8BYTE, targetReg, REG_SPBASE);
+        emit->emitIns_R_I(INS_agfi, EA_8BYTE, targetReg, (int)frameBelow);
 
         // Zero out memory using XC.
         if (compiler->info.compInitMem)
@@ -5935,19 +5928,31 @@ void CodeGen::genLclHeap(GenTree* tree)
             else
             {
                 // For large sizes (> 4095), zero in a loop stepping the pointer with disp 0.
-                BasicBlock* loop = genCreateTempLabel();
-                regNumber cntReg = internalRegisters.Extract(tree);
-                emit->emitIns_R_I(INS_lgfi, EA_8BYTE, cntReg, (int)alignedSize);
+                size_t chunks = alignedSize / 256;
+                size_t leftover  = alignedSize % 256;
 
-                genDefineTempLabel(loop);
-                emit->emitIns_SS(INS_xc, 256, targetReg, 0, targetReg, 0);
-                emit->emitIns_R_I(INS_aghi, EA_8BYTE, targetReg, 256);
-                emit->emitIns_R_I(INS_aghi, EA_8BYTE, cntReg, -256);
-                emit->emitIns_R_I(INS_cgfi, EA_8BYTE, cntReg, 0);
-                inst_JMP(EJ_gt, loop);
+                if (chunks > 0)
+                {
+                    BasicBlock* loop   = genCreateTempLabel();
+                    regNumber   cntReg = internalRegisters.Extract(tree);
+                    emit->emitIns_R_I(INS_lgfi, EA_8BYTE, cntReg, chunks);
 
+                    genDefineTempLabel(loop);
+                    emit->emitIns_SS(INS_xc, 256, targetReg, 0, targetReg, 0);
+                    emit->emitIns_R_I(INS_aghi, EA_8BYTE, targetReg, 256);
+                    emit->emitIns_R_I(INS_aghi, EA_8BYTE, cntReg, -1);
+                    emit->emitIns_R_I(INS_cgfi, EA_8BYTE, cntReg, 0);
+                    inst_JMP(EJ_ne, loop);
+                }
+
+                // Zero any remaining trailing bytes (remainder < 256 bytes)
+                if (leftover > 0)
+                {
+                    emit->emitIns_SS(INS_xc, leftover, targetReg, 0, targetReg, 0);
+                }
                 // Compute buffer (SP + frameBelow).
-                emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, targetReg, REG_SPBASE, frameBelow);
+                emit->emitIns_R_R(INS_lgr, EA_8BYTE, targetReg, REG_SPBASE);
+                emit->emitIns_R_I(INS_agfi, EA_8BYTE, targetReg, (int)frameBelow);
             }
         }
     }
@@ -5981,7 +5986,8 @@ void CodeGen::genLclHeap(GenTree* tree)
         {
             BasicBlock* loop = genCreateTempLabel();
 
-            emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, targetReg, REG_SPBASE, frameBelow);
+            emit->emitIns_R_R(INS_lgr, EA_8BYTE, targetReg, REG_SPBASE);
+            emit->emitIns_R_I(INS_agfi, EA_8BYTE, targetReg, (int)frameBelow);
 
             genDefineTempLabel(loop);
             emit->emitIns_SS(INS_xc, 8, targetReg, 0, targetReg, 0);
@@ -5991,8 +5997,8 @@ void CodeGen::genLclHeap(GenTree* tree)
             inst_JMP(EJ_ne, loop);
         }
 
-        emit->emitIns_R_R_I(INS_lay, EA_PTRSIZE, targetReg, REG_SPBASE, frameBelow);
-
+        emit->emitIns_R_R(INS_lgr, EA_8BYTE, targetReg, REG_SPBASE);
+        emit->emitIns_R_I(INS_agfi, EA_8BYTE, targetReg, (int)frameBelow);
         genDefineTempLabel(endLabel);
     }
 
