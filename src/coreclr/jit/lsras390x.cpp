@@ -1971,6 +1971,7 @@ int LinearScan::BuildNode(GenTree* tree)
                         {
                             // We need two registers: regCnt and RegTmp
                             buildInternalIntRegisterDefForNode(tree);
+                            buildInternalIntRegisterDefForNode(tree);
                         }
                     }
                 }
@@ -1978,8 +1979,6 @@ int LinearScan::BuildNode(GenTree* tree)
             else
             {
                 srcCount = 1;
-                // Allocate 2 registers in either case
-                buildInternalIntRegisterDefForNode(tree);
                 buildInternalIntRegisterDefForNode(tree);
             }
 
